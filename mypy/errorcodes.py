@@ -73,6 +73,11 @@ HAS_TYPE: Final = ErrorCode(
 IMPORT: Final = ErrorCode(
     "import", "Require that imported module can be found or has stubs", "General"
 )
+DECLARE: Final = ErrorCode(
+    "declare-members",
+    "Class members must be declared according to PEP-526 - Class and instance variable annotations",
+    "General"
+)
 NO_REDEF: Final = ErrorCode("no-redef", "Check that each name is defined once", "General")
 FUNC_RETURNS_VALUE: Final = ErrorCode(
     "func-returns-value", "Check that called function returns a value in value context", "General"

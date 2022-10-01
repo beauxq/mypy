@@ -32,6 +32,7 @@ PER_MODULE_OPTIONS: Final = {
     "disallow_any_expr",
     "disallow_any_generics",
     "disallow_any_unimported",
+    "disallow_implicit_attribute",
     "disallow_incomplete_defs",
     "disallow_subclassing_any",
     "disallow_untyped_calls",
@@ -185,6 +186,9 @@ class Options:
         # Report an error for any branches inferred to be unreachable as a result of
         # type analysis.
         self.warn_unreachable = False
+
+        # require declaration of class members
+        self.disallow_implicit_attribute = True
 
         # Variable names considered True
         self.always_true: list[str] = []

@@ -3592,6 +3592,8 @@ class SemanticAnalyzer(
                     self.fail("Protocol members cannot be defined via assignment to self", lval)
                 else:
                     # Implicit attribute definition in __init__.
+                    if self.options.disallow_implicit_attribute:
+                        self.fail(f'Assigned to member "{lval.name}" without declaring it', lval, code=codes.DECLARE)
                     lval.is_new_def = True
                     lval.is_inferred_def = True
                     v = Var(lval.name)

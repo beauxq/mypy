@@ -682,6 +682,13 @@ section of the command line docs.
    Prohibit equality checks, identity checks, and container checks between
    non-overlapping types.
 
+.. confval:: disallow_implicit_attribute
+
+    :type: boolean
+    :default: True
+
+   Require declaring class members according to PEP-0526 - Class and instance variable annotations.
+
 .. confval:: strict
 
     :type: boolean
