@@ -62,7 +62,7 @@ from mypy.types import (
 )
 from mypy.typestate import SubtypeKind, TypeState
 from mypy.typevars import fill_typevars_with_any
-from mypy.typevartuples import extract_unpack, split_with_instance
+from mypy.typevartuples import extract_unpack, fully_split_with_mapped_and_template
 
 # Flags for detected protocol members
 IS_SETTABLE: Final = 1
@@ -485,8 +485,22 @@ class SubtypeVisitor(TypeVisitor[bool]):
                     t = erased
                 nominal = True
                 if right.type.has_type_var_tuple_type:
-                    left_prefix, left_middle, left_suffix = split_with_instance(left)
-                    right_prefix, right_middle, right_suffix = split_with_instance(right)
+                    split_result = fully_split_with_mapped_and_template(left, right)
+                    if split_result is None:
+                        return False
+
+                    (
+                        left_prefix,
+                        left_mprefix,
+                        left_middle,
+                        left_msuffix,
+                        left_suffix,
+                        right_prefix,
+                        right_mprefix,
+                        right_middle,
+                        right_msuffix,
+                        right_suffix,
+                    ) = split_result
 
                     left_unpacked = extract_unpack(left_middle)
                     right_unpacked = extract_unpack(right_middle)
@@ -495,6 +509,15 @@ class SubtypeVisitor(TypeVisitor[bool]):
                     def check_mixed(
                         unpacked_type: ProperType, compare_to: tuple[Type, ...]
                     ) -> bool:
+                        if (
+                            isinstance(unpacked_type, Instance)
+                            and unpacked_type.type.fullname == "builtins.tuple"
+                        ):
+                            if not all(
+                                is_equivalent(l, unpacked_type.args[0]) for l in compare_to
+                            ):
+                                return False
+                            return True
                         if isinstance(unpacked_type, TypeVarTupleType):
                             return False
                         if isinstance(unpacked_type, AnyType):
@@ -521,13 +544,6 @@ class SubtypeVisitor(TypeVisitor[bool]):
                         if not check_mixed(left_unpacked, right_middle):
                             return False
                     elif left_unpacked is None and right_unpacked is not None:
-                        if (
-                            isinstance(right_unpacked, Instance)
-                            and right_unpacked.type.fullname == "builtins.tuple"
-                        ):
-                            return all(
-                                is_equivalent(l, right_unpacked.args[0]) for l in left_middle
-                            )
                         if not check_mixed(right_unpacked, left_middle):
                             return False
 
@@ -540,16 +556,24 @@ class SubtypeVisitor(TypeVisitor[bool]):
                             if not is_equivalent(left_t, right_t):
                                 return False
 
+                    assert len(left_mprefix) == len(right_mprefix)
+                    assert len(left_msuffix) == len(right_msuffix)
+
+                    for left_item, right_item in zip(
+                        left_mprefix + left_msuffix, right_mprefix + right_msuffix
+                    ):
+                        if not is_equivalent(left_item, right_item):
+                            return False
+
                     left_items = t.args[: right.type.type_var_tuple_prefix]
                     right_items = right.args[: right.type.type_var_tuple_prefix]
                     if right.type.type_var_tuple_suffix:
                         left_items += t.args[-right.type.type_var_tuple_suffix :]
                         right_items += right.args[-right.type.type_var_tuple_suffix :]
-
                     unpack_index = right.type.type_var_tuple_prefix
                     assert unpack_index is not None
                     type_params = zip(
-                        left_prefix + right_suffix,
+                        left_prefix + left_suffix,
                         right_prefix + right_suffix,
                         right.type.defn.type_vars[:unpack_index]
                         + right.type.defn.type_vars[unpack_index + 1 :],
@@ -1082,6 +1106,7 @@ def find_member(
             and name not in ["__getattr__", "__setattr__", "__getattribute__"]
             and not is_operator
             and not class_obj
+            and itype.extra_attrs is None  # skip ModuleType.__getattr__
         ):
             for method_name in ("__getattribute__", "__getattr__"):
                 # Normally, mypy assumes that instances that define __getattr__ have all
@@ -1676,35 +1701,32 @@ def try_restrict_literal_union(t: UnionType, s: Type) -> list[Type] | None:
     return new_items
 
 
-def restrict_subtype_away(t: Type, s: Type, *, ignore_promotions: bool = False) -> Type:
+def restrict_subtype_away(t: Type, s: Type) -> Type:
     """Return t minus s for runtime type assertions.
 
     If we can't determine a precise result, return a supertype of the
     ideal result (just t is a valid result).
 
     This is used for type inference of runtime type checks such as
-    isinstance(). Currently this just removes elements of a union type.
+    isinstance(). Currently, this just removes elements of a union type.
     """
     p_t = get_proper_type(t)
     if isinstance(p_t, UnionType):
         new_items = try_restrict_literal_union(p_t, s)
         if new_items is None:
             new_items = [
-                restrict_subtype_away(item, s, ignore_promotions=ignore_promotions)
+                restrict_subtype_away(item, s)
                 for item in p_t.relevant_items()
-                if (
-                    isinstance(get_proper_type(item), AnyType)
-                    or not covers_at_runtime(item, s, ignore_promotions)
-                )
+                if (isinstance(get_proper_type(item), AnyType) or not covers_at_runtime(item, s))
             ]
         return UnionType.make_union(new_items)
-    elif covers_at_runtime(t, s, ignore_promotions):
+    elif covers_at_runtime(t, s):
         return UninhabitedType()
     else:
         return t
 
 
-def covers_at_runtime(item: Type, supertype: Type, ignore_promotions: bool) -> bool:
+def covers_at_runtime(item: Type, supertype: Type) -> bool:
     """Will isinstance(item, supertype) always return True at runtime?"""
     item = get_proper_type(item)
     supertype = get_proper_type(supertype)
@@ -1712,12 +1734,12 @@ def covers_at_runtime(item: Type, supertype: Type, ignore_promotions: bool) -> b
     # Since runtime type checks will ignore type arguments, erase the types.
     supertype = erase_type(supertype)
     if is_proper_subtype(
-        erase_type(item), supertype, ignore_promotions=ignore_promotions, erase_instances=True
+        erase_type(item), supertype, ignore_promotions=True, erase_instances=True
     ):
         return True
     if isinstance(supertype, Instance) and supertype.type.is_protocol:
         # TODO: Implement more robust support for runtime isinstance() checks, see issue #3827.
-        if is_proper_subtype(item, supertype, ignore_promotions=ignore_promotions):
+        if is_proper_subtype(item, supertype, ignore_promotions=True):
             return True
     if isinstance(item, TypedDictType) and isinstance(supertype, Instance):
         # Special case useful for selecting TypedDicts from unions using isinstance(x, dict).
