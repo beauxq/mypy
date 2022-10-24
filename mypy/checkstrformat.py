@@ -430,17 +430,6 @@ class StringFormatterChecker:
             if isinstance(c_typ, LiteralType) and isinstance(c_typ.value, str):
                 if len(c_typ.value) != 1:
                     self.msg.requires_int_or_char(call, format_call=True)
-        if (not spec.conv_type or spec.conv_type == "s") and not spec.conversion:
-            if has_type_component(actual_type, "builtins.bytes") and not custom_special_method(
-                actual_type, "__str__"
-            ):
-                self.msg.fail(
-                    'On Python 3 formatting "b\'abc\'" with "{}" '
-                    'produces "b\'abc\'", not "abc"; '
-                    'use "{!r}" if this is desired behavior',
-                    call,
-                    code=codes.STR_BYTES_PY3,
-                )
         if spec.flags:
             numeric_types = UnionType(
                 [self.named_type("builtins.int"), self.named_type("builtins.float")]
