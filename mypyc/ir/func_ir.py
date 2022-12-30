@@ -17,7 +17,7 @@ from mypyc.ir.ops import (
     Register,
     Value,
 )
-from mypyc.ir.rtypes import RType, bitmap_rprimitive, deserialize_type, is_fixed_width_rtype
+from mypyc.ir.rtypes import RType, bitmap_rprimitive, deserialize_type
 from mypyc.namegen import NameGenerator
 
 
@@ -70,6 +70,8 @@ class FuncSignature:
     def __init__(self, args: Sequence[RuntimeArg], ret_type: RType) -> None:
         self.args = tuple(args)
         self.ret_type = ret_type
+        # Bitmap arguments are use to mark default values for arguments that
+        # have types with overlapping error values.
         self.num_bitmap_args = num_bitmap_args(self.args)
         if self.num_bitmap_args:
             extra = [
@@ -77,6 +79,12 @@ class FuncSignature:
                 for i in range(self.num_bitmap_args)
             ]
             self.args = self.args + tuple(reversed(extra))
+
+    def real_args(self) -> tuple[RuntimeArg, ...]:
+        """Return arguments without any synthetic bitmap arguments."""
+        if self.num_bitmap_args:
+            return self.args[: -self.num_bitmap_args]
+        return self.args
 
     def bound_sig(self) -> "FuncSignature":
         if self.num_bitmap_args:
@@ -105,7 +113,7 @@ class FuncSignature:
 def num_bitmap_args(args: tuple[RuntimeArg, ...]) -> int:
     n = 0
     for arg in args:
-        if is_fixed_width_rtype(arg.type) and arg.kind.is_optional():
+        if arg.type.error_overlap and arg.kind.is_optional():
             n += 1
     return (n + (BITMAP_BITS - 1)) // BITMAP_BITS
 
